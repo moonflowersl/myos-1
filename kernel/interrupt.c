@@ -3,6 +3,7 @@
 #include "global.h"
 #include "io.h"
 #include "print.h"
+
 /*略*/
 #define PIC_M_CTRL 0x20		//主片
 #define PIC_M_DATA 0x21
@@ -83,11 +84,38 @@ static void general_intr_handler(uint8_t vec_nr){
 		// 0x2f 是从片 8259A 上的最后一个 IRQ 引脚，保留项
 		return ;
 	}
-	put_str("int vector : 0x");
-	put_int(vec_nr);
-	put_char(' ');
+	// 将光标置为屏幕左上角，清理一块区域
+	set_cursor(0);		// 设置光标位置
+	int cursor_pos = 0;
+	while(cursor_pos < 320) {
+		put_char(' ');
+		cursor_pos++;
+	}
+
+	// 将光标重新置为屏幕左上角
+	set_cursor(0);
+	put_str("!!!!! exception message begin !!!!!\n");
+	set_cursor(88);		// 从第 2 行第 8 个字符开始打印
 	put_str(intr_name[vec_nr]);
-	put_char('\n');
+	if (vec_nr == 14) {		// 若为 Pagefault，将缺失的地址打印出来并悬停
+		int page_fault_vaddr = 0;
+		// cr2 存放造成 page_fault 的地址
+		asm("movl %%cr2, %0" : "=r" (page_fault_vaddr));
+		put_str("\npage fault addr is ");
+		put_int(page_fault_vaddr);
+	}
+
+ 	put_str("\n!!!!! exception message end !!!!!\n");
+
+	// 已经进入中断处理程序就表示已经处在关中断情况下
+	// 不会出现线程调度的情况，故下面的死循环不会再被中断
+	while(1);
+}
+
+// 在中断处理程序数组第 vector_no 个元素中注册安装中断处理程序 function
+void register_handler(uint8_t vector_no, intr_handler function) 
+{
+	idt_table[vector_no] = function;
 }
 
 /*完成一般中断处理函数注册及异常名称注册*/
