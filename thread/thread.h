@@ -10,9 +10,9 @@ typedef void thread_func(void*);
 enum task_status {
     TASK_RUNNING,
     TASK_READY,
-    TASK_VLOCKED,
+    TASK_BLOCKED,
     TASK_WAITING,
-    TASK_HANDING,
+    TASK_HANGING,
     TASK_DIED
 };
 
