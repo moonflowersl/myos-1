@@ -236,7 +236,7 @@ put_int:
 	jl .put_each_num
 	popad
 	ret
-
+	
 global set_cursor
 set_cursor:
    pushad

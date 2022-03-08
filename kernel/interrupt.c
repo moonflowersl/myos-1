@@ -3,16 +3,13 @@
 #include "global.h"
 #include "io.h"
 #include "print.h"
-
 /*略*/
 #define PIC_M_CTRL 0x20		//主片
 #define PIC_M_DATA 0x21
 #define PIC_S_CTRL 0xA0		//从片
 #define PIC_S_DATA 0xA1
 
-#define IDT_DESC_CNT 	0x30
-
-		//目前总共支持的中断数量
+#define IDT_DESC_CNT 	0x30		//目前总共支持的中断数量
 
 #define EFLAGS_IF	0x00000200	//eflags中的 IF 位为 1
 #define GET_EFLAGS(EFLAG_VAR) asm volatile("pushfl; popl %0": "=g"(EFLAG_VAR))
@@ -52,7 +49,7 @@ static void pic_init(void){
 	outb(PIC_S_DATA, 0x01);		//ICW4: 0000 0001 ,8086 模式，正常EOI
 
 	//打开主片上的 IR0 也就是目前只接受时钟产生的中断
-	outb (PIC_M_DATA, 0xfd);
+	outb (PIC_M_DATA, 0xfc);
 	outb (PIC_S_DATA, 0xff);
 
 	put_str("    pic init done\n");
@@ -86,38 +83,30 @@ static void general_intr_handler(uint8_t vec_nr){
 		// 0x2f 是从片 8259A 上的最后一个 IRQ 引脚，保留项
 		return ;
 	}
-	// 将光标置为屏幕左上角，清理一块区域
-	set_cursor(0);		// 设置光标位置
-	int cursor_pos = 0;
-	while(cursor_pos < 320) {
-		put_char(' ');
-		cursor_pos++;
-	}
+    // 将光标置为屏幕左上角, 清理一块区域
+    set_cursor(0);	//设置光标位置
+    int cursor_pos = 0;
+    while(cursor_pos < 320) {
+        put_char(' ');
+        cursor_pos++;
+    }
+    // 将光标重新置为屏幕左上角
+    set_cursor(0);
+    put_str("!!!!! exception message begin !!!!!\n");
+    set_cursor(88); // 从第 2 行第 8 个字符开始打印
+    put_str(intr_name[vec_nr]);
+    if(vec_nr == 14) { // 若为 Pagefault, 将缺失的地址打印出来并悬停
+        int page_fault_vaddr = 0;
+        // cr2 存放造成 page_fault 的地址
+        asm("movl %%cr2, %0" : "=r" (page_fault_vaddr));
+        put_str("\npage fault addr is "); put_int(page_fault_vaddr);
+    }
 
-	// 将光标重新置为屏幕左上角
-	set_cursor(0);
-	put_str("!!!!! exception message begin !!!!!\n");
-	set_cursor(88);		// 从第 2 行第 8 个字符开始打印
-	put_str(intr_name[vec_nr]);
-	if (vec_nr == 14) {		// 若为 Pagefault，将缺失的地址打印出来并悬停
-		int page_fault_vaddr = 0;
-		// cr2 存放造成 page_fault 的地址
-		asm("movl %%cr2, %0" : "=r" (page_fault_vaddr));
-		put_str("\npage fault addr is ");
-		put_int(page_fault_vaddr);
-	}
+    put_str("\n!!!!! exception message end !!!!!\n");
 
- 	put_str("\n!!!!! exception message end !!!!!\n");
-
-	// 已经进入中断处理程序就表示已经处在关中断情况下
-	// 不会出现线程调度的情况，故下面的死循环不会再被中断
-	while(1);
-}
-
-// 在中断处理程序数组第 vector_no 个元素中注册安装中断处理程序 function
-void register_handler(uint8_t vector_no, intr_handler function) 
-{
-	idt_table[vector_no] = function;
+    // 已经进入中断处理程序就表示已经处在关中断情况下
+    // 不会出现线程调度的情况, 故下面的死循环不会再被中断
+    while(1);
 }
 
 /*完成一般中断处理函数注册及异常名称注册*/
@@ -151,6 +140,11 @@ static void exception_init(void){
 	intr_name[19] = "#XF SIMD Floating-Point Exception";
 }
 
+// 在中断处理程序数组第 vector_no 个元素中注册安装中断处理程序 function
+void register_handler(uint8_t vector_no, intr_handler function) {
+    idt_table[vector_no] = function;
+}
+
 /*完成有关中断的所有初始化工作*/
 void idt_init(){
 	put_str("idt_init start\n");
@@ -159,22 +153,23 @@ void idt_init(){
 	pic_init();		//初始化 8259A
 
 	/*加载 idt*/
-	uint64_t idt_operand = ((sizeof(idt) - 1) | ((uint64_t)((uint32_t)idt << 16)));
-	asm volatile("lidt %0"::"m"(idt_operand));
+	uint64_t idt_operand = ((sizeof(idt) - 1) | ((uint64_t)(uint32_t)idt << 16));
+	//uint64_t idt_operand = ((sizeof(idt) - 1) | ((uint64_t)((uint32_t)idt << 16)));
+    asm volatile("lidt %0" : : "m" (idt_operand));	
 	put_str("idt_init done\n");
 }
 
-/*开中断并返回开中断前的状态*/
-enum intr_status intr_enable(){
-	enum intr_status old_status;
-	if(INTR_ON == intr_get_status()){
-		old_status = INTR_ON;
-		return old_status;
-	}else{
-		old_status = INTR_OFF;
-		asm volatile("sti");		//开中断，sti 将 IF 位置 1
-		return old_status;
-	}
+/* 开中断并返回开中断前的状态*/
+enum intr_status intr_enable() {
+   enum intr_status old_status;
+   if (INTR_ON == intr_get_status()) {
+      old_status = INTR_ON;
+      return old_status;
+   } else {
+      old_status = INTR_OFF;
+      asm volatile("sti");	 // 开中断,sti指令将IF位置1
+      return old_status;
+   }
 }
 
 
