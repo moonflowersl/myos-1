@@ -7,15 +7,25 @@
 #include "debug.h"
 #include "print.h"
 #include "process.h"
-
-#define PG_SIZE 4096
+#include "sync.h"
 
 struct task_struct* main_thread; // 主线程 PCB
+struct task_struct* idle_thread;        // idle 线程
 struct list thread_ready_list; // 就绪队列
 struct list thread_all_list; // 所有任务队列
+struct lock pid_lock;                   // 分配 pid 锁
 static struct list_elem* thread_tag; // 用于保存队列中的线程结点
 
 extern void switch_to(struct task_struct* cur, struct task_struct* next);
+
+// 系统空闲时运行的线程
+static void idle(void* arg /*UNUSED*/) {
+    while (1) {
+        thread_block(TASK_BLOCKED);
+        // 执行 hlt 时必须要保证目前处在开中断的情况下
+        asm volatile ("sti; hlt" : : : "memory");
+    }
+}
 
 // 获取当前线程 PCB 指针
 struct task_struct* running_thread(void) {
@@ -30,7 +40,17 @@ static void kernel_thread(thread_func* function, void* func_arg) {
     // 执行 function 前需要开中断,
     // 避免后面的时钟中断被屏蔽, 而无法调度其它线程
     intr_enable();
+    //while(1);   
     function(func_arg);
+}
+
+// 分配 pid
+static pid_t allocate_pid(void) {
+    static pid_t next_pid = 0;
+    lock_acquire(&pid_lock);
+    next_pid++;
+    lock_release(&pid_lock);
+    return next_pid;
 }
 
 // 初始化线程栈 thread_stack，将待执行的函数和参数放到 thread_stack 中相应的位置
@@ -56,6 +76,7 @@ void thread_create(struct task_struct* pthread, //待创建的线程指针
 // 待初始化线程指针（PCB），线程名称，线程优先级
 void init_thread(struct task_struct* pthread, char* name, int prio) {
     memset(pthread, 0, sizeof(*pthread));
+    pthread->pid = allocate_pid();
     strcpy(pthread->name, name);
 
     if(pthread == main_thread) {
@@ -71,6 +92,18 @@ void init_thread(struct task_struct* pthread, char* name, int prio) {
     pthread->ticks = prio;
     pthread->elapsed_ticks = 0;
     pthread->pgdir = NULL;
+
+    // 预留标准输入输出
+    pthread->fd_table[0] = 0;
+    pthread->fd_table[1] = 1;
+    pthread->fd_table[2] = 2;
+    // 其余的全置为 -1
+    uint8_t fd_idx = 3;
+    while(fd_idx < MAX_FILES_OPEN_PER_PROC) {
+        pthread->fd_table[fd_idx] = -1;
+        fd_idx++;
+    }
+    pthread->cwd_inode_nr = 0;
     pthread->stack_magic = 0x19870916; // 自定义魔数
 }
 
@@ -122,6 +155,11 @@ void schedule(void) {
         // 若此线程阻塞, 不需要将其加入队列
     }
 
+    // 如果就绪队列中没有可运行的任务, 就唤醒 idle
+    if (list_empty(&thread_ready_list)) {
+        thread_unblock(idle_thread);
+    }
+
     ASSERT(!list_empty(&thread_ready_list));
     thread_tag = NULL;
     thread_tag = list_pop(&thread_ready_list);
@@ -133,13 +171,28 @@ void schedule(void) {
     switch_to(cur, next);
 }
 
+// 主动让出 cpu, 换其它线程运行
+void thread_yield(void) {
+    struct task_struct* cur = running_thread();
+    enum intr_status old_status = intr_disable();
+    ASSERT(!elem_find(&thread_ready_list, &cur->general_tag));
+    list_append(&thread_ready_list, &cur->general_tag);
+    cur->status = TASK_READY;
+    schedule();
+    intr_set_status(old_status);
+}
+
 // 初始化线程环境
 void thread_init(void) {
     put_str("thread_init start\n");
     list_init(&thread_ready_list);
     list_init(&thread_all_list);
+    lock_init(&pid_lock);
+
     // 将当前 main 函数创建为线程
     make_main_thread();
+    idle_thread = thread_start("idle", 10, idle, NULL);
+
     put_str("thread_init done\n");
 }
 

@@ -65,10 +65,8 @@ void process_activate(struct task_struct* p_thread) {
 /* 创建页目录表,将当前页表的表示内核空间的pde复制,
  * 成功则返回页目录的虚拟地址,否则返回-1 */
 uint32_t* create_page_dir(void) {
-    console_put_str("create_page_dir\n");
    /* 用户进程的页表不能让用户直接访问到,所以在内核空间来申请 */
    uint32_t* page_dir_vaddr = get_kernel_pages(1);
-       console_put_str("create_page_dir:");console_put_int(page_dir_vaddr);console_put_str("\n");
 
    if (page_dir_vaddr == NULL) {
       console_put_str("create_page_dir: get_kernel_page failed!");
@@ -105,7 +103,7 @@ void process_execute(void* filename, char* name) {
    create_user_vaddr_bitmap(thread);
    thread_create(thread, start_process, filename);
    thread->pgdir = create_page_dir();
-   //block_desc_init(thread->u_block_desc);
+   block_desc_init(thread->u_block_desc);
    
    enum intr_status old_status = intr_disable();
    ASSERT(!elem_find(&thread_ready_list, &thread->general_tag));

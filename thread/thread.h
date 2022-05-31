@@ -3,9 +3,13 @@
 #include "stdint.h"
 #include "list.h"
 #include "memory.h"
+#include "bitmap.h"
+
+#define MAX_FILES_OPEN_PER_PROC 8
 
 // 自定义通用函数类型, 在线程函数中作为形参类型
 typedef void thread_func(void*);
+typedef int16_t pid_t;
 
 // 进程或线程状态
 enum task_status {
@@ -68,17 +72,22 @@ struct thread_stack {
 // 进程或线程的 PCB
 struct task_struct {
     uint32_t* self_kstack;         // 各内核线程都用自己的内核栈
+    pid_t pid;
     enum task_status status;
     char name[16];
     uint8_t priority;              // 线程优先级
     uint8_t ticks;                 // 每次在处理器上执行的时间嘀嗒数
     uint32_t elapsed_ticks;        // 此任务上 cpu 运行后至今占用了多少嘀嗒数
 
+    int32_t fd_table[MAX_FILES_OPEN_PER_PROC];  // 文件描述符数组
+
     struct list_elem general_tag;   // 用于线程在一般队列中的结点
     struct list_elem all_list_tag;  // 用于线程在 thread_all_list 中的结点
 
     uint32_t* pgdir;                // 进程自己页表的虚拟地址
     struct virtual_addr userprog_vaddr; // 用户进程的虚拟地址
+    struct mem_block_desc u_block_desc[DESC_CNT];   //用户进程内存块描述符
+    uint32_t cwd_inode_nr;          // 进程所在工作目录的 inode 编号
     uint32_t stack_magic;           // 栈的边界标记, 用于检测栈的溢出
 };
 extern struct list thread_ready_list;
@@ -90,4 +99,7 @@ struct task_struct* thread_start(char* name, int prio, thread_func function, voi
 struct task_struct* running_thread(void);
 void schedule(void);
 void thread_init(void);
+void thread_block(enum task_status stat);
+void thread_unblock(struct task_struct* pthread);
+void thread_yield(void);
 #endif

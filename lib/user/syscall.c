@@ -1,5 +1,5 @@
 #include "syscall.h"
- 
+
 /* 无参数的系统调用 */
 #define _syscall0(NUMBER) ({	           \
    int retval;					           \
@@ -11,7 +11,7 @@
    );							           \
    retval;						           \
 })
- 
+
 /* 一个参数的系统调用 */
 #define _syscall1(NUMBER, ARG1) ({			       \
    int retval;					               \
@@ -23,7 +23,7 @@
    );							       \
    retval;						       \
 })
- 
+
 /* 两个参数的系统调用 */
 #define _syscall2(NUMBER, ARG1, ARG2) ({		       \
    int retval;						       \
@@ -35,7 +35,7 @@
    );							       \
    retval;						       \
 })
- 
+
 /* 三个参数的系统调用 */
 #define _syscall3(NUMBER, ARG1, ARG2, ARG3) ({		       \
    int retval;						       \
@@ -48,8 +48,23 @@
    retval;						       \
 })
 
-// 放回当前任务 pid
+
+// 返回当前任务pid 
 uint32_t getpid() {
-    return _syscall0(SYS_GETPID);
+   return _syscall0(SYS_GETPID);
 }
- 
+
+// 打印字符串str 
+uint32_t write(int32_t fd, const void* buf, uint32_t count) {
+   return _syscall3(SYS_WRITE, fd, buf, count);
+}
+
+// 申请 size 字节大小的内存, 并返回结果
+void* malloc(uint32_t size) {
+   return (void*)_syscall1(SYS_MALLOC, size);
+}
+
+// 释放 ptr 指向的内存
+void free(void* ptr) {
+   _syscall1(SYS_FREE, ptr);
+}
