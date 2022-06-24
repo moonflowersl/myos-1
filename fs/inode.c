@@ -135,10 +135,10 @@ void inode_close(struct inode* inode) {
         list_remove(&inode->inode_tag); // 将 i 节点从 part->open_inodes 中去掉
         // inode_open 时为实现 inode 被所有进程共享，已经在 sys_malloc 为 inode 分配了内核空间，释放 inode 时也要确保释放的内核内存池
         struct task_struct* cur = running_thread();
-        uint32_t* cur_pairdir_bak = cur->pgdir;
+        uint32_t* cur_pagedir_bak = cur->pgdir;
         cur->pgdir = NULL;
         sys_free(inode);
-        cur->pgdir = cur_pairdir_bak; 
+        cur->pgdir = cur_pagedir_bak; 
     }
     intr_set_status(old_status);
 }

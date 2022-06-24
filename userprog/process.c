@@ -31,7 +31,7 @@ void start_process(void* filename_) {
    asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (proc_stack) : "memory");
 }
 
-/* 击活页表 */
+/* 激活页表 */
 void page_dir_activate(struct task_struct* p_thread) {
 /********************************************************
  * 执行此函数时,当前任务可能是线程。

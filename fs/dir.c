@@ -226,7 +226,7 @@ bool delete_dir_entry(struct partition* part, struct dir* pdir, uint32_t inode_n
 
     // 目录项在存储时不会跨扇区
     uint32_t dir_entry_size = part->sb->dir_entry_size;
-    uint32_t dir_entry_per_sec = (SECTOR_SIZE / dir_entry_size);    // 每扇区最大的目录项数目
+    uint32_t dir_entrys_per_sec = (SECTOR_SIZE / dir_entry_size);    // 每扇区最大的目录项数目
     struct dir_entry* dir_e = (struct dir_entry*)io_buf;
     struct dir_entry* dir_entry_found = NULL;
     uint8_t dir_entry_idx, dir_entry_cnt;
@@ -246,7 +246,7 @@ bool delete_dir_entry(struct partition* part, struct dir* pdir, uint32_t inode_n
         ide_read(part->my_disk, all_blocks[block_idx], io_buf, 1);
 
         // 遍历所有的目录项，统计该扇区的目录项数量及是否有待删除的目录项
-        while (dir_entry_idx < dir_entry_per_sec) {
+        while (dir_entry_idx < dir_entrys_per_sec) {
             if ((dir_e + dir_entry_idx)->f_type != FT_UNKNOWN) {
                 if (!strcmp((dir_e + dir_entry_idx)->filename, "."))
                     is_dir_first_block = true;
@@ -329,7 +329,7 @@ struct dir_entry* dir_read(struct dir* dir) {
     uint32_t block_idx = 0, dir_entry_idx = 0;
     while (block_idx < 12) {
         all_blocks[block_idx] = dir_inode->i_sectors[block_idx];
-        block_idx;
+        block_idx++;
     }
     if (dir_inode->i_sectors[12] != 0) {    // 若含有一级间接块表
         ide_read(cur_part->my_disk, dir_inode->i_sectors[12], all_blocks+12, 1); 
@@ -340,7 +340,7 @@ struct dir_entry* dir_read(struct dir* dir) {
     uint32_t cur_dir_entry_pos = 0; // 当前目录项的偏移，此项用来判断是否之前已经返回过的目录项
     uint32_t dir_entry_size = cur_part->sb->dir_entry_size;
     uint32_t dir_entrys_per_sec = SECTOR_SIZE / dir_entry_size;  // 一个扇区内可容纳的目录项数量
-    // 因为此目录内可能删除了某些文件或子目录，所以要遍历所有快
+    // 因为此目录内可能删除了某些文件或子目录，所以要遍历所有块
     while (block_idx < block_cnt) {
         if (dir->dir_pos >= dir_inode->i_size) {
             return NULL;

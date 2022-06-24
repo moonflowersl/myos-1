@@ -12,6 +12,8 @@
 #include "string.h"
 #include "super_block.h"
 #include "console.h"
+#include "keyboard.h"
+#include "ioqueue.h"
 
 struct partition* cur_part; // 默认情况下操作的分区
 
@@ -71,23 +73,23 @@ static void partition_format(struct partition* part) {
     uint32_t boot_sector_sects = 1;
     uint32_t super_block_sects = 1;
     // 节点位图占用的扇区数，最多支持 4096 个文件
-    uint32_t inode_bitmap_sects = DIV_ROUND_UP(MAX_FILES_PRE_PART, BITS_PRE_SECTOR);    // inode 位图占用的扇区数
-    uint32_t inode_table_sects = DIV_ROUND_UP((sizeof(struct inode) * MAX_FILES_PRE_PART), SECTOR_SIZE);    // inode_table 数组占用的扇区数
+    uint32_t inode_bitmap_sects = DIV_ROUND_UP(MAX_FILES_PER_PART, BITS_PER_SECTOR);    // inode 位图占用的扇区数
+    uint32_t inode_table_sects = DIV_ROUND_UP((sizeof(struct inode) * MAX_FILES_PER_PART), SECTOR_SIZE);    // inode_table 数组占用的扇区数
     uint32_t used_sects = boot_sector_sects + super_block_sects + inode_bitmap_sects + inode_table_sects;
     uint32_t free_sects = part->sec_cnt - used_sects;   // 分区总扇区 - 使用的扇区 = 可用的扇区
 
     // 简单处理快位图占据的扇区数
     uint32_t block_bitmap_sects;
-    block_bitmap_sects = DIV_ROUND_UP(free_sects, BITS_PRE_SECTOR);
+    block_bitmap_sects = DIV_ROUND_UP(free_sects, BITS_PER_SECTOR);
     // block_bitmap_bit_len 位图中位的长度，可用快的数量
     uint32_t block_bitmap_bit_len = free_sects - block_bitmap_sects;
-    block_bitmap_sects = DIV_ROUND_UP(block_bitmap_bit_len, BITS_PRE_SECTOR);
+    block_bitmap_sects = DIV_ROUND_UP(block_bitmap_bit_len, BITS_PER_SECTOR);
 
     // 超级块初始化
     struct super_block sb;
     sb.magic = 0x19590318;
     sb.sec_cnt = part->sec_cnt;
-    sb.inode_cnt = MAX_FILES_PRE_PART;
+    sb.inode_cnt = MAX_FILES_PER_PART;
     sb.part_lba_base = part->start_lba;
     // 第 0 块是引导快，第 1 块是超级块
     sb.block_bitmap_lba = sb.part_lba_base + 2;
@@ -99,7 +101,7 @@ static void partition_format(struct partition* part) {
     sb.inode_table_lba = sb.inode_bitmap_lba + sb.inode_bitmap_sects;
     sb.inode_table_sects = inode_table_sects;
 
-    sb.data_start_lba = sb.inode_bitmap_lba + sb.inode_bitmap_sects;
+    sb.data_start_lba = sb.inode_table_lba + sb.inode_bitmap_sects;
     sb.root_inode_no = 0;   // 根目录的 inode 编号是 0
     sb.dir_entry_size = sizeof(struct dir_entry);
 
@@ -140,7 +142,7 @@ static void partition_format(struct partition* part) {
     while (bit_idx <= block_bitmap_last_bit) {
         buf[block_bitmap_last_byte] &= ~(1 << bit_idx++);
     }
-    ide_write(hd, sb.block_bitmap_lba, buf, sb.block_bitmap_sects);
+    ide_write(hd, sb.inode_bitmap_lba, buf, sb.inode_bitmap_sects);
 
     // 3. 将 inode 位图初始化并写入 sb.inode_bitmap_lba
     // 先清空缓冲区
@@ -240,7 +242,7 @@ void filesys_init() {
 }
 
 // 将最上层路径名称解析出来
-static char* path_parse(char* pathname, char* name_store) {
+char* path_parse(char* pathname, char* name_store) {
     // 根目录不需要单独解析
     if (pathname[0] == '/') {
         // 路径中出现 1 个或多个连续的字符 '/'，将这些 '/' 跳过
@@ -372,10 +374,10 @@ int32_t sys_open(const char* pathname, uint8_t flags) {
         return -1;       
     }
 
-    uint32_t path_searched_path = path_depth_cnt(searched_record.searched_path);
+    uint32_t path_searched_depth = path_depth_cnt(searched_record.searched_path);
 
     // 先判断是否把 pathname 的各层目录都访问到了，即是否在某个中间目录就失败了
-    if (pathname_depth != path_searched_path) {
+    if (pathname_depth != path_searched_depth) {
         //printf("%d %d\n", pathname_depth, path_searched_path);
         printk("cannot access %s: Not a directory, subpath %s isn`t exist\n", pathname, searched_record.searched_path);
         dir_close(searched_record.parent_dir);
@@ -410,7 +412,7 @@ int32_t sys_open(const char* pathname, uint8_t flags) {
 }
 
 // 将文件描述符转化为文件表的下标
-static uint32_t fd_local2global(uint32_t local_fd) {
+uint32_t fd_local2global(uint32_t local_fd) {
     struct task_struct* cur = running_thread();
     int32_t global_fd = cur->fd_table[local_fd];
     ASSERT(global_fd >= 0 && global_fd < MAX_FILE_OPEN);
@@ -421,46 +423,82 @@ static uint32_t fd_local2global(uint32_t local_fd) {
 int32_t sys_close(int32_t fd) {
     int32_t ret = -1;
     if (fd > 2) {
-        uint32_t _fd = fd_local2global(fd);
-        ret = file_close(&file_table[_fd]);
-        running_thread()->fd_table[fd] = -1;    // 使该文件描述符位可用
+        uint32_t global_fd = fd_local2global(fd);
+        if (is_pipe(fd)) {
+            // 如果此管道上的描述符都被关闭，释放管道的环形缓冲区
+            if (--file_table[global_fd].fd_pos == 0) {
+                mfree_page(PF_KERNEL, file_table[global_fd].fd_inode, 1);
+                file_table[global_fd].fd_inode = NULL;
+            }
+            ret = 0;
+        } else {
+            ret = file_close(&file_table[global_fd]);
+        } 
+        running_thread()->fd_table[fd] = -1;    //使该文件描述符位可用
     }
     return ret;
 }
 
-// 将 buf 中连续的 count 字节写入文件描述符 fd，成功则返回写入的字节数，失败返回 -1
+/* 将buf中连续count个字节写入文件描述符fd,成功则返回写入的字节数,失败返回-1 */
 int32_t sys_write(int32_t fd, const void* buf, uint32_t count) {
     if (fd < 0) {
-        printk("sys_write: fd error\n");
-        return -1;    
+       printk("sys_write: fd error\n");
+       return -1;
     }
-    if (fd == stdout_no) {
-        char tmp_buf[1024] = {0};
-        memcpy(tmp_buf, buf, count);
-        console_put_str(tmp_buf);
-        return count;
-    }
-    uint32_t _fd = fd_local2global(fd);
-    struct file* wr_file = &file_table[_fd];
-    if (wr_file->fd_flag & O_WRONLY || wr_file->fd_flag & O_RDWR) {
-        uint32_t bytes_written = file_write(wr_file, buf, count);
-        return bytes_written;
+    if (fd == stdout_no) {  
+    /* 标准输出有可能被重定向为管道缓冲区, 因此要判断 */
+        if (is_pipe(fd)) {
+	        return pipe_write(fd, buf, count);
+        } else {
+	        char tmp_buf[1024] = {0};
+	        memcpy(tmp_buf, buf, count);
+	        console_put_str(tmp_buf);
+	        return count;
+        }
+    } else if (is_pipe(fd)) {	    /* 若是管道就调用管道的方法 */
+      return pipe_write(fd, buf, count);
     } else {
-        console_put_str("sys_write: not allowed to write file without flag O_RDWR or O_WRONLY\n");
-        return -1;
+        uint32_t _fd = fd_local2global(fd);
+        struct file* wr_file = &file_table[_fd];
+        if (wr_file->fd_flag & O_WRONLY || wr_file->fd_flag & O_RDWR) {
+	        uint32_t bytes_written  = file_write(wr_file, buf, count);
+	        return bytes_written;
+        } else {
+	        console_put_str("sys_write: not allowed to write file without flag O_RDWR or O_WRONLY\n");
+	        return -1;
+      }
     }
 }
 
-// 从文件描述符 fd 指向的文件中读取 count 个字节到 buf，若成功则返回读出的字节数，到文件尾则返回 -1
+/* 从文件描述符fd指向的文件中读取count个字节到buf,若成功则返回读出的字节数,到文件尾则返回-1 */
 int32_t sys_read(int32_t fd, void* buf, uint32_t count) {
-    if (fd < 0) {
-        printk("sys_read: fd error\n");
-        return -1;     
-    }
     ASSERT(buf != NULL);
-    uint32_t _fd = fd_local2global(fd);
-    return file_read(&file_table[_fd], buf, count);
-} 
+    int32_t ret = -1;
+    uint32_t global_fd = 0;
+    if (fd < 0 || fd == stdout_no || fd == stderr_no) {
+        printk("sys_read: fd error\n");
+    } else if (fd == stdin_no) {
+        // 标准输入有可能被重定向为管道缓冲区，因此要判断
+        if (is_pipe(fd)) {
+            ret = pipe_read(fd, buf, count);
+        } else {
+            char* buffer = buf;
+            uint32_t bytes_read = 0;
+            while (bytes_read < count) {
+                *buffer = ioq_getchar(&kbd_buf);
+                bytes_read++;
+                buffer++;
+            }
+            ret = (bytes_read == 0 ? -1 : (int32_t)bytes_read);
+        }
+    } else if (is_pipe(fd)) {   // 若是管道就调用管道的方法
+        ret = pipe_read(fd, buf, count);
+    } else {
+        global_fd = fd_local2global(fd);
+        ret = file_read(&file_table[global_fd], buf, count);
+    }
+    return ret;
+}
 
 // 重置用于文件读写操作的偏移指针，成功时返回新的偏移量，出错时返回 -1
 int32_t sys_lseek(int32_t fd, int32_t offset, uint8_t whence) {
@@ -573,7 +611,7 @@ int32_t sys_mkdir(const char* pathname) {
 
         struct dir* parent_dir = searched_record.parent_dir;
         // 目录名称后可能会有字符 ‘/’，所以最好直接用 searched_record.searched_path，无  ‘/’
-        char* dirname = strchr(searched_record.searched_path, '/') + 1;
+        char* dirname = strrchr(searched_record.searched_path, '/') + 1;
 
         inode_no = inode_bitmap_alloc(cur_part);
         if (inode_no == -1) {
@@ -636,6 +674,14 @@ int32_t sys_mkdir(const char* pathname) {
         // 将新创建的目录 inode 同步到硬盘
         memset(io_buf, 0, SECTOR_SIZE*2);
         inode_sync(cur_part, &new_dir_inode, io_buf);
+
+        // 将 inode 位图同步到硬盘
+        bitmap_sync(cur_part, inode_no, INODE_BITMAP);
+
+        sys_free(io_buf);
+
+        // 关闭所创建目录的父目录
+        dir_close(searched_record.parent_dir);
         return 0;
     }
 
@@ -762,7 +808,7 @@ static int get_child_dir_name(uint32_t p_inode_nr, uint32_t c_inode_nr, char* pa
 
     struct dir_entry* dir_e = (struct dir_entry*)io_buf;
     uint32_t dir_entry_size = cur_part->sb->dir_entry_size;
-    uint32_t dir_entry_per_sec = (512 / dir_entry_size);
+    uint32_t dir_entrys_per_sec = (512 / dir_entry_size);
     block_idx = 0;
     // 遍历所有块
     while (block_idx < block_cnt) {
@@ -770,7 +816,7 @@ static int get_child_dir_name(uint32_t p_inode_nr, uint32_t c_inode_nr, char* pa
             ide_read(cur_part->my_disk, all_blocks[block_idx], io_buf, 1);
             uint8_t dir_e_idx = 0;
             // 遍历每个目录项
-            while (dir_e_idx < dir_entry_per_sec) {
+            while (dir_e_idx < dir_entrys_per_sec) {
                 if ((dir_e + dir_e_idx)->i_no == c_inode_nr) {
                     strcat(path, "/");
                     strcat(path, (dir_e+dir_e_idx)->filename);
@@ -821,7 +867,7 @@ char* sys_getcwd(char* buf, uint32_t size) {
     ASSERT(strlen(full_path_reverse) <= size);
     // 至此 full_path_reverse 中路径是反着的
     char* last_slash;   // 字符串中最后一个斜杆地址
-    while ((last_slash = strchr(full_path_reverse, "/"))) {
+    while ((last_slash = strrchr(full_path_reverse, '/'))) {
         uint16_t len = strlen(buf);
         strcpy(buf+len, last_slash);
         // 在 full_path_reverse 中添加结束字符串，作为下一次执行 strcpy 中 last_slash 的边界
@@ -875,4 +921,20 @@ int32_t sys_stat(const char* path, struct stat* buf) {
     }
     dir_close(searched_record.parent_dir);
     return ret;
+}
+
+void sys_help(void) {
+   printk("\
+    buildin commands:\n\
+       ls: show directory or file information\n\
+       cd: change current work directory\n\
+       mkdir: create a directory\n\
+       rmdir: remove a empty directory\n\
+       rm: remove a regular file\n\
+       pwd: show current work directory\n\
+       ps: show process information\n\
+       clear: clear screen\n\
+    shortcut key:\n\
+       ctrl+l: clear screen\n\
+       ctrl+u: clear input\n\n");
 }

@@ -3,17 +3,17 @@
 #include "stdint.h"
 #include "ide.h"
 
-#define MAX_FILES_PRE_PART 4096    // 每个分区所支持的最大创建的文件数
-#define BITS_PRE_SECTOR 4096    // 每扇区的位数
-#define SECTOR_SIZE 512 // 扇区字节大小
-#define BLOCK_SIZE SECTOR_SIZE // 块字节大小
-#define MAX_PATH_LEN 512    // 路径最大长度
+#define MAX_FILES_PER_PART 4096 // 每个分区所支持最大创建的文件数
+#define BITS_PER_SECTOR 4096    // 每扇区的位数
+#define SECTOR_SIZE 512         // 扇区字节大小
+#define BLOCK_SIZE SECTOR_SIZE  // 块字节大小
+#define MAX_PATH_LEN 512        // 路径最大长度
 
 // 文件类型
 enum file_types {
-    FT_UNKNOWN,     // 不支持的文件类型
-    FT_REGULAR,     // 普通文件
-    FT_DIRECTORY    // 目录
+    FT_UNKNOWN,  // 不支持的文件类型
+    FT_REGULAR,  // 普通文件
+    FT_DIRECTORY // 目录
 };
 
 // 打开文件的选项
@@ -31,22 +31,25 @@ enum whence {
     SEEK_END
 };
 
+
 // 用来记录查找文件过程中已找到的上级路径
 struct path_search_record {
-    char searched_path[MAX_PATH_LEN];   // 查找过程中的父路径
+    char searched_path[MAX_PATH_LEN]; // 查找过程中的父路径
     struct dir* parent_dir; // 文件或目录所在的直接父目录
-    enum file_types file_type;  // 文件类型
+    enum file_types file_type; // 文件类型
 };
 
 // 文件属性结构体
 struct stat {
-    uint32_t st_ino;    // inode 编号
-    uint32_t st_size;   // 尺寸
-    enum file_types st_filetype;    // 文件类型
+    uint32_t st_ino; // inode 编号
+    uint32_t st_size; // 尺寸
+    enum file_types st_filetype; // 文件类型
 };
+
 
 extern struct partition* cur_part;
 void filesys_init(void);
+char* path_parse(char* pathname, char* name_store);
 int32_t path_depth_cnt(char* pathname);
 int32_t sys_open(const char* pathname, uint8_t flags);
 int32_t sys_close(int32_t fd);
@@ -63,4 +66,7 @@ int32_t sys_rmdir(const char* pathname);
 char* sys_getcwd(char* buf, uint32_t size);
 int32_t sys_chdir(const char* path);
 int32_t sys_stat(const char* path, struct stat* buf);
-#endif // !__FS_FS_H
+uint32_t fd_local2global(uint32_t local_fd);
+void sys_help(void);
+
+#endif

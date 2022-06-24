@@ -1,6 +1,7 @@
 #include "string.h"
 #include "global.h"
 #include "debug.h"
+#include "assert.h"
 
 /*将 dst_ 起始的 size 个字节设置为 value*/
 void memset(void* dst_, uint8_t value, uint32_t size){
@@ -64,7 +65,7 @@ int8_t strcmp (const char* a, const char* b) {
 
 /*从左到右查找字符串str中首次出现字符 ch 的地址*/
 char* strchr(const char* str, const uint8_t ch) {
-        ASSERT(str != NULL);
+    ASSERT(str != NULL);
 	while(*str != 0){
 		if(*str == ch){
 			return (char*)str;
@@ -76,7 +77,7 @@ char* strchr(const char* str, const uint8_t ch) {
 
 /*从后往前查找字符串 str 中首次出现 字符ch的地址*/
 char* strrchr (const char* str, const uint8_t ch) {
-        ASSERT(str != NULL);
+    assert(str != NULL);
 	const char* last_char = NULL;
 	while(*str != 0){
 		if(*str == ch){

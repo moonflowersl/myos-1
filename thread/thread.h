@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "bitmap.h"
 
+#define TASK_NAME_LEN 16
 #define MAX_FILES_OPEN_PER_PROC 8
 
 // 自定义通用函数类型, 在线程函数中作为形参类型
@@ -88,6 +89,8 @@ struct task_struct {
     struct virtual_addr userprog_vaddr; // 用户进程的虚拟地址
     struct mem_block_desc u_block_desc[DESC_CNT];   //用户进程内存块描述符
     uint32_t cwd_inode_nr;          // 进程所在工作目录的 inode 编号
+    int16_t parent_pid;             // 父进程 pid
+    int8_t exit_status;             // 进程结束时自己调用 exit 传入的参数
     uint32_t stack_magic;           // 栈的边界标记, 用于检测栈的溢出
 };
 extern struct list thread_ready_list;
@@ -102,4 +105,6 @@ void thread_init(void);
 void thread_block(enum task_status stat);
 void thread_unblock(struct task_struct* pthread);
 void thread_yield(void);
+void init(void);
+void sys_ps(void);
 #endif
